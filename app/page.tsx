@@ -989,7 +989,7 @@ function TemplatesScreen({ state, onStart, onAddToPlans }: {
                     borderBottom: i < plan.exercises.length - 1 ? "0.5px solid var(--border)" : "none",
                   }}>
                     <span style={{ color: "var(--text)", fontWeight: 500 }}>{ex.name}</span>
-                    <span>{pe.defaultSets} × {pe.defaultReps}{pe.defaultWeight > 0 ? ` @ ${pe.defaultWeight} lbs` : ""}</span>
+                    <span>{pe.defaultSets} × {pe.defaultReps}</span>
                   </div>
                 );
               })}
