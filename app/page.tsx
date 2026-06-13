@@ -2,8 +2,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { AppState, Plan, Exercise, WorkoutSession, WorkoutExercise, SetLog, PlanExercise, MuscleGroup } from "@/lib/types";
 import { loadState, saveState, uid, updatePRs } from "@/lib/storage";
+import { TEMPLATE_PLANS, TEMPLATE_INFO } from "@/lib/templates";
 
-type Screen = "dashboard" | "plans" | "exercises" | "history" | "workout";
+type Screen = "dashboard" | "plans" | "exercises" | "history" | "templates" | "workout";
 type Modal = "none" | "newPlan" | "addExercise" | "editPlan" | "newExercise" | "addToPlan" | "sessionDetail";
 
 const MUSCLE_COLORS: Record<MuscleGroup, string> = {
@@ -171,6 +172,17 @@ export default function App() {
                 onDelete={(id) => save({ ...state, sessions: state.sessions.filter((s) => s.id !== id) })}
               />
             )}
+            {screen === "templates" && (
+              <TemplatesScreen
+                state={state}
+                onStart={startWorkout}
+                onAddToPlans={(plan) => {
+                  const already = state.plans.some((p) => p.id === plan.id);
+                  if (!already) save({ ...state, plans: [...state.plans, plan] });
+                  showToast(already ? "Already in your plans!" : "Added to your plans!");
+                }}
+              />
+            )}
           </div>
           <NavBar screen={screen} onNav={setScreen} />
         </>
@@ -228,10 +240,11 @@ function Toast({ msg }: { msg: string }) {
 // ── NAV BAR ──────────────────────────────────────────────────────────────────
 function NavBar({ screen, onNav }: { screen: Screen; onNav: (s: Screen) => void }) {
   const tabs: { id: Screen; label: string; icon: string }[] = [
-    { id: "dashboard", label: "Home", icon: "⬡" },
-    { id: "plans", label: "Plans", icon: "◈" },
-    { id: "exercises", label: "Library", icon: "◎" },
-    { id: "history", label: "Log", icon: "◷" },
+    { id: "dashboard", label: "Home",      icon: "⬡" },
+    { id: "templates", label: "Templates", icon: "★" },
+    { id: "plans",     label: "Plans",     icon: "◈" },
+    { id: "exercises", label: "Library",   icon: "◎" },
+    { id: "history",   label: "Log",       icon: "◷" },
   ];
   return (
     <nav style={{
@@ -893,6 +906,116 @@ function SessionDetailModal({ session, exercises, onClose }: { session: WorkoutS
         })}
       </div>
     </ModalWrapper>
+  );
+}
+
+// ── TEMPLATES SCREEN ─────────────────────────────────────────────────────────
+function TemplatesScreen({ state, onStart, onAddToPlans }: {
+  state: AppState;
+  onStart: (p: Plan) => void;
+  onAddToPlans: (p: Plan) => void;
+}) {
+  // Build a full Plan with exercise names resolved from the template + state's exercise list
+  const resolvedPlans = TEMPLATE_PLANS.map((tpl) => {
+    // Merge template exercises with any custom exercises in state
+    const allExercises = state.exercises;
+    const validExercises = tpl.exercises.filter((pe) =>
+      allExercises.some((e) => e.id === pe.exerciseId)
+    );
+    return { ...tpl, exercises: validExercises };
+  });
+
+  const ICONS: Record<string, string> = {
+    tpl_push: "🫸", tpl_pull: "🫷", tpl_legs: "🦵",
+    tpl_cardio: "🏃", tpl_hiit: "⚡", tpl_upper: "💪", tpl_full: "🔥",
+  };
+
+  return (
+    <div style={{ padding: "60px 20px 16px" }}>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Templates</h1>
+      <p style={{ fontSize: 14, color: "var(--text-muted)", marginBottom: 24, margin: "0 0 24px" }}>
+        Pre-built plans ready to go. Start one directly or save it to your plans.
+      </p>
+
+      {resolvedPlans.map((plan) => {
+        const info = TEMPLATE_INFO[plan.id];
+        const inMyPlans = state.plans.some((p) => p.id === plan.id);
+
+        return (
+          <div key={plan.id} style={{
+            background: "var(--surface)", borderRadius: 18, padding: 18,
+            marginBottom: 14, border: "0.5px solid var(--border)",
+          }}>
+            {/* Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{
+                  width: 44, height: 44, borderRadius: 12,
+                  background: "var(--surface2)", fontSize: 22,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  {ICONS[plan.id] || "🏋️"}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 17 }}>{plan.name}</div>
+                  <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 1 }}>{info?.desc}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Muscle tags */}
+            {info?.tags && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+                {info.tags.map((tag) => (
+                  <span key={tag} style={{
+                    fontSize: 11, padding: "3px 9px", borderRadius: 100, textTransform: "capitalize",
+                    background: `${MUSCLE_COLORS[tag as MuscleGroup] ?? "#888"}22`,
+                    color: MUSCLE_COLORS[tag as MuscleGroup] ?? "#888",
+                    fontWeight: 500, border: `0.5px solid ${MUSCLE_COLORS[tag as MuscleGroup] ?? "#888"}44`,
+                  }}>{tag}</span>
+                ))}
+              </div>
+            )}
+
+            {/* Exercise list */}
+            <div style={{ marginBottom: 16 }}>
+              {plan.exercises.map((pe, i) => {
+                const ex = state.exercises.find((e) => e.id === pe.exerciseId);
+                if (!ex) return null;
+                return (
+                  <div key={i} style={{
+                    display: "flex", justifyContent: "space-between",
+                    fontSize: 13, color: "var(--text-muted)", padding: "5px 0",
+                    borderBottom: i < plan.exercises.length - 1 ? "0.5px solid var(--border)" : "none",
+                  }}>
+                    <span style={{ color: "var(--text)", fontWeight: 500 }}>{ex.name}</span>
+                    <span>{pe.defaultSets} × {pe.defaultReps}{pe.defaultWeight > 0 ? ` @ ${pe.defaultWeight} lbs` : ""}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <button onClick={() => onAddToPlans(plan)} style={{
+                padding: "10px", borderRadius: 10, fontWeight: 600, fontSize: 13,
+                background: inMyPlans ? "var(--surface2)" : "var(--accent-dim)",
+                border: `0.5px solid ${inMyPlans ? "var(--border)" : "var(--accent)"}`,
+                color: inMyPlans ? "var(--text-dim)" : "var(--accent)",
+              }}>
+                {inMyPlans ? "✓ Saved" : "+ Save Plan"}
+              </button>
+              <button onClick={() => onStart(plan)} style={{
+                padding: "10px", borderRadius: 10, fontWeight: 700, fontSize: 13,
+                background: "var(--accent)", color: "#0a0a0a",
+              }}>
+                Start Now
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
