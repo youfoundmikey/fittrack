@@ -5,7 +5,7 @@ import { loadState, saveState, uid, updatePRs } from "@/lib/storage";
 import { TEMPLATE_PLANS, TEMPLATE_INFO } from "@/lib/templates";
 
 type Screen = "dashboard" | "plans" | "exercises" | "history" | "templates" | "workout";
-type Modal = "none" | "newPlan" | "addExercise" | "editPlan" | "newExercise" | "addToPlan" | "sessionDetail";
+type Modal = "none" | "newPlan" | "addExercise" | "editPlan" | "newExercise" | "addToPlan" | "sessionDetail" | "editTemplate";
 
 const MUSCLE_COLORS: Record<MuscleGroup, string> = {
   chest: "#c8f542", back: "#42c8f5", shoulders: "#f5a642",
@@ -33,6 +33,7 @@ export default function App() {
   const [modal, setModal] = useState<Modal>("none");
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null);
   const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
+  const [editingTemplate, setEditingTemplate] = useState<Plan | null>(null);
   const [viewSession, setViewSession] = useState<WorkoutSession | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -176,6 +177,7 @@ export default function App() {
               <TemplatesScreen
                 state={state}
                 onStart={startWorkout}
+                onEdit={(plan) => { setEditingTemplate(plan); setModal("editTemplate"); }}
                 onAddToPlans={(plan) => {
                   const already = state.plans.some((p) => p.id === plan.id);
                   if (!already) save({ ...state, plans: [...state.plans, plan] });
@@ -220,6 +222,21 @@ export default function App() {
       )}
       {modal === "sessionDetail" && viewSession && (
         <SessionDetailModal session={viewSession} exercises={state.exercises} onClose={() => { setModal("none"); setViewSession(null); }} />
+      )}
+      {modal === "editTemplate" && editingTemplate && (
+        <EditTemplateModal
+          plan={editingTemplate}
+          exercises={state.exercises}
+          onStart={(plan) => { setModal("none"); setEditingTemplate(null); startWorkout(plan); }}
+          onSave={(plan) => {
+            const already = state.plans.some((p) => p.id === plan.id);
+            if (!already) save({ ...state, plans: [...state.plans, plan] });
+            setModal("none");
+            setEditingTemplate(null);
+            showToast(already ? "Already in your plans!" : "Saved to your plans!");
+          }}
+          onClose={() => { setModal("none"); setEditingTemplate(null); }}
+        />
       )}
     </div>
   );
@@ -910,17 +927,15 @@ function SessionDetailModal({ session, exercises, onClose }: { session: WorkoutS
 }
 
 // ── TEMPLATES SCREEN ─────────────────────────────────────────────────────────
-function TemplatesScreen({ state, onStart, onAddToPlans }: {
+function TemplatesScreen({ state, onStart, onEdit, onAddToPlans }: {
   state: AppState;
   onStart: (p: Plan) => void;
+  onEdit: (p: Plan) => void;
   onAddToPlans: (p: Plan) => void;
 }) {
-  // Build a full Plan with exercise names resolved from the template + state's exercise list
   const resolvedPlans = TEMPLATE_PLANS.map((tpl) => {
-    // Merge template exercises with any custom exercises in state
-    const allExercises = state.exercises;
     const validExercises = tpl.exercises.filter((pe) =>
-      allExercises.some((e) => e.id === pe.exerciseId)
+      state.exercises.some((e) => e.id === pe.exerciseId)
     );
     return { ...tpl, exercises: validExercises };
   });
@@ -934,7 +949,7 @@ function TemplatesScreen({ state, onStart, onAddToPlans }: {
     <div style={{ padding: "60px 20px 16px" }}>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Templates</h1>
       <p style={{ fontSize: 14, color: "var(--text-muted)", marginBottom: 24, margin: "0 0 24px" }}>
-        Pre-built plans ready to go. Start one directly or save it to your plans.
+        Pre-built plans ready to go. Edit, start, or save to your plans.
       </p>
 
       {resolvedPlans.map((plan) => {
@@ -995,27 +1010,167 @@ function TemplatesScreen({ state, onStart, onAddToPlans }: {
               })}
             </div>
 
-            {/* Actions */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {/* Actions — 3 buttons */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               <button onClick={() => onAddToPlans(plan)} style={{
-                padding: "10px", borderRadius: 10, fontWeight: 600, fontSize: 13,
+                padding: "10px 6px", borderRadius: 10, fontWeight: 600, fontSize: 12,
                 background: inMyPlans ? "var(--surface2)" : "var(--accent-dim)",
                 border: `0.5px solid ${inMyPlans ? "var(--border)" : "var(--accent)"}`,
                 color: inMyPlans ? "var(--text-dim)" : "var(--accent)",
               }}>
-                {inMyPlans ? "✓ Saved" : "+ Save Plan"}
+                {inMyPlans ? "✓ Saved" : "+ Save"}
+              </button>
+              <button onClick={() => onEdit(plan)} style={{
+                padding: "10px 6px", borderRadius: 10, fontWeight: 600, fontSize: 12,
+                background: "var(--surface2)", border: "0.5px solid var(--border)",
+                color: "var(--text)",
+              }}>
+                ✎ Edit
               </button>
               <button onClick={() => onStart(plan)} style={{
-                padding: "10px", borderRadius: 10, fontWeight: 700, fontSize: 13,
+                padding: "10px 6px", borderRadius: 10, fontWeight: 700, fontSize: 12,
                 background: "var(--accent)", color: "#0a0a0a",
               }}>
-                Start Now
+                Start ▶
               </button>
             </div>
           </div>
         );
       })}
     </div>
+  );
+}
+
+// ── EDIT TEMPLATE MODAL ───────────────────────────────────────────────────────
+function EditTemplateModal({ plan, exercises, onStart, onSave, onClose }: {
+  plan: Plan;
+  exercises: Exercise[];
+  onStart: (p: Plan) => void;
+  onSave: (p: Plan) => void;
+  onClose: () => void;
+}) {
+  const [planExercises, setPlanExercises] = useState<PlanExercise[]>(plan.exercises);
+  const [showAddEx, setShowAddEx] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const updatePE = (exId: string, field: keyof PlanExercise, val: number) => {
+    setPlanExercises(planExercises.map((pe) => pe.exerciseId === exId ? { ...pe, [field]: val } : pe));
+  };
+
+  const removeEx = (exId: string) => {
+    setPlanExercises(planExercises.filter((pe) => pe.exerciseId !== exId));
+  };
+
+  const addEx = (exId: string) => {
+    if (planExercises.some((pe) => pe.exerciseId === exId)) return;
+    setPlanExercises([...planExercises, { exerciseId: exId, defaultSets: 3, defaultReps: 10, defaultWeight: 0 }]);
+    setShowAddEx(false);
+    setSearch("");
+  };
+
+  const edited: Plan = { ...plan, exercises: planExercises };
+
+  const filteredEx = exercises.filter((e) =>
+    e.name.toLowerCase().includes(search.toLowerCase()) &&
+    !planExercises.some((pe) => pe.exerciseId === e.id)
+  );
+
+  return (
+    <ModalWrapper onClose={onClose}>
+      <ModalHeader title={`Edit · ${plan.name}`} onClose={onClose} />
+      <div style={{ padding: "16px 20px 8px", overflowY: "auto", flex: 1 }}>
+
+        {/* Exercise rows */}
+        {planExercises.map((pe) => {
+          const ex = exercises.find((e) => e.id === pe.exerciseId);
+          if (!ex) return null;
+          return (
+            <div key={pe.exerciseId} style={{
+              background: "var(--surface2)", borderRadius: 14, padding: 14, marginBottom: 10,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{ex.name}</div>
+                  <span style={{
+                    fontSize: 10, padding: "2px 7px", borderRadius: 100, textTransform: "capitalize",
+                    background: `${MUSCLE_COLORS[ex.muscleGroup]}22`, color: MUSCLE_COLORS[ex.muscleGroup],
+                  }}>{ex.muscleGroup}</span>
+                </div>
+                <SmBtn onClick={() => removeEx(pe.exerciseId)} danger>✕</SmBtn>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                {([
+                  { label: "Sets",   field: "defaultSets"   as const, val: pe.defaultSets },
+                  { label: "Reps",   field: "defaultReps"   as const, val: pe.defaultReps },
+                  { label: "Wt(lbs)",field: "defaultWeight" as const, val: pe.defaultWeight },
+                ]).map(({ label, field, val }) => (
+                  <div key={field}>
+                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
+                    <input
+                      type="number" inputMode="numeric" value={val || ""}
+                      placeholder="0"
+                      onChange={(e) => updatePE(pe.exerciseId, field, parseFloat(e.target.value) || 0)}
+                      style={setInputStyle}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Add exercise */}
+        {showAddEx ? (
+          <div style={{ marginBottom: 12 }}>
+            <input
+              placeholder="Search exercises…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ ...inputStyle, marginBottom: 8 }}
+              autoFocus
+            />
+            <div style={{ maxHeight: 200, overflowY: "auto" }}>
+              {filteredEx.map((ex) => (
+                <button key={ex.id} onClick={() => addEx(ex.id)} style={{
+                  width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "10px 12px", background: "var(--surface)", border: "0.5px solid var(--border)",
+                  borderRadius: 10, marginBottom: 6, color: "var(--text)", textAlign: "left",
+                }}>
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>{ex.name}</span>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "capitalize" }}>{ex.muscleGroup}</span>
+                </button>
+              ))}
+              {filteredEx.length === 0 && (
+                <div style={{ textAlign: "center", padding: 16, color: "var(--text-muted)", fontSize: 13 }}>No exercises found</div>
+              )}
+            </div>
+            <button onClick={() => { setShowAddEx(false); setSearch(""); }} style={{
+              width: "100%", padding: 10, background: "none",
+              border: "0.5px solid var(--border)", borderRadius: 10,
+              color: "var(--text-muted)", fontSize: 13, marginTop: 4,
+            }}>Cancel</button>
+          </div>
+        ) : (
+          <button onClick={() => setShowAddEx(true)} style={{
+            width: "100%", padding: 12, background: "none",
+            border: "0.5px dashed var(--border)", borderRadius: 12,
+            color: "var(--text-muted)", fontSize: 13, marginBottom: 12,
+          }}>+ Add Exercise</button>
+        )}
+      </div>
+
+      {/* Footer actions */}
+      <div style={{ padding: "12px 20px 28px", borderTop: "0.5px solid var(--border)", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <button onClick={() => onSave(edited)} style={{
+          padding: 14, borderRadius: 12, fontWeight: 600, fontSize: 14,
+          background: "var(--accent-dim)", border: "0.5px solid var(--accent)", color: "var(--accent)",
+        }}>Save to Plans</button>
+        <button onClick={() => onStart(edited)} style={{
+          padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14,
+          background: "var(--accent)", color: "#0a0a0a",
+        }}>Start ▶</button>
+      </div>
+    </ModalWrapper>
   );
 }
 
